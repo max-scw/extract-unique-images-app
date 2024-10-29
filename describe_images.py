@@ -34,11 +34,9 @@ def build_descriptor_model():
     return model, preprocess
 
 
-def describe_image(p2img: Union[Path, str], model, preprocess) -> torch.tensor:
-    # load image as color image (preprocessing expects an image with 3 channels)
-    img = Image.open(p2img).convert("RGB")
+def describe_image(img: Image, model, preprocess) -> torch.tensor:
     # preprocess image to apply the NN
-    input_tensor = preprocess(img)
+    input_tensor = preprocess(img.convert("RGB"))
     input_batch = input_tensor.unsqueeze(0)  # Add a batch dimension
     # Encode the image using the pre-trained model
     with torch.no_grad():
@@ -46,6 +44,6 @@ def describe_image(p2img: Union[Path, str], model, preprocess) -> torch.tensor:
     return encoded_features.squeeze()
 
 
-def calculate_feature_diffs(features1, features_all) -> List[float]:
+def calculate_feature_diffs(features1, features_all: list) -> List[float]:
     # calculate differences to already stored images
     return [float(((features1 - val) ** 2).mean().sqrt()) for val in features_all]
