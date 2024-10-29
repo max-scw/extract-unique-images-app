@@ -43,6 +43,7 @@ def main():
     logger.debug("Session state variables initialized.")
 
     th_mse = 0.1  # FIXME: make optional user input
+    #0 means all of the pictures
     save_folder = Path("data")
 
     cols = st.columns([1, 2, 1])
