@@ -112,7 +112,6 @@ def main():
     col5, col6 = st.columns([3, 1])
 
     with col5:
-
         mse_slider = st.select_slider(
             "Select a value of the MSE",
             options=[round(x, 3) for x in np.arange(0.2, 0.5, 0.025)],
