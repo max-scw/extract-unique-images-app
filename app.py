@@ -120,12 +120,14 @@ def main():
             key="slider_mse",
         )
 
-    # 右侧显示 Counter
     with col6:
         st.metric(label="# Images", help="Unique images", value=st.session_state.image_counts)
     #    st.metric(value=st.session_state.counter)
 
     if button_start:
+        if export_dir.exists():
+            message.error(f"The folder '{folder_name}' already exists. Please choose a new name.")
+            return
         st.session_state.running = True
         st.session_state.stored_images = []
         st.session_state.img_feature_list = []
@@ -182,6 +184,9 @@ def main():
             # the length should check
             st.rerun()
 
+    if folder_name == "":
+        message.warning(f"Please enter the folder name.")
+
     if button_stop:
         st.session_state.can_update = True
         show_list_images(image_files)
@@ -207,10 +212,6 @@ def main():
         if len(temp) == 1:
             message.warning("Threshold set too high, only the first image remains.")
             show_list_images(temp)
-    elif not st.session_state.running and mse_slider == st.session_state.slider_tmp:
-        message.warning(f"MSE hasn't been changed.")
-        temp = change(mse_slider, image_files, st.session_state.img_feature_list)
-        show_list_images(temp)
     elif not st.session_state.running and mse_slider < st.session_state.slider_tmp:
         message.warning(f"This is the same images gallery.")
         temp = change(mse_slider, image_files, st.session_state.img_feature_list)
@@ -221,7 +222,7 @@ def main():
 if __name__ == "__main__":
     DATA_FOLDER = (
         Path(r"C:\Users\TianXue\OneDrive - Voith Group of Companies\PackingDocumentation\Images")
-        / "PXL_20241105_140857726.TS_30fps"
+        / "PXL_20241105_141202849 mit Schwenkarm.TS_30fps"
     )
     TOTAL_COUNTS = len(list(DATA_FOLDER.glob("*.jpg")))
     FRAMES_PER_SECOND = 10
