@@ -40,12 +40,6 @@ def show_list_images(image_files: List, resolution_slider: Tuple):
             st.image(img_resized, caption=None, width=200)
 
 
-#def change(mse_slider: float, image_files, img_feature_list):
-    #temp = []
-    #for i, feature in enumerate(img_feature_list):
-        #if feature > mse_slider and i < len(img_feature_list):
-            #temp.append(image_files[i])
-    #return temp
 def change(mse_slider: float, image_files, img_feature_list):
     temp = []
     # Ensure we only iterate over indices that are valid for both lists
@@ -53,6 +47,7 @@ def change(mse_slider: float, image_files, img_feature_list):
         if img_feature_list[i] > mse_slider:
             temp.append(image_files[i])
     return temp
+
 
 def main():
     st.title("Packing Documentation")
@@ -151,7 +146,7 @@ def main():
         st.session_state.running = True
         st.session_state.stored_images = []
         st.session_state.img_feature_list = []
-        st.session_state.image_counts = 0  # 确保计数从零开始
+        st.session_state.image_counts = 0
         st.session_state.folder_name = folder_name
         export_dir = save_folder / folder_name
 
@@ -159,7 +154,6 @@ def main():
             message.warning(f"Please enter the folder name.")
             st.stop()
         else:
-            # 检查文件夹是否已存在
             while export_dir.exists():
                 if "_" in folder_name and folder_name.split("_")[-1].isdigit():
                     base_name = "_".join(folder_name.split("_")[:-1])
@@ -175,7 +169,7 @@ def main():
             message.success(f"Folder '{folder_name}' created successfully.")
 
     if st.session_state.running:
-        # to ensure that the export_dir changed
+        # to ensure that the export_dir has changed
         export_dir = save_folder / st.session_state.folder_name
         export_dir.mkdir(parents=True, exist_ok=True)
 
@@ -206,7 +200,6 @@ def main():
                 st.session_state.img_feature_list.append(diff_min)
                 st.session_state.image_counts += 1
                 st.session_state.slider_tmp = mse_slider
-
 
             st.session_state.counter += int(30 / FRAMES_PER_SECOND)
             st.rerun()
