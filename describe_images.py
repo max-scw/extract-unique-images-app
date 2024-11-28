@@ -34,6 +34,7 @@ def build_descriptor_model():
     return model, preprocess
 
 
+
 def describe_image(img: Image, model, preprocess) -> torch.tensor:
     # preprocess image to apply the NN
     input_tensor = preprocess(img.convert("RGB"))

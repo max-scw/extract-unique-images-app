@@ -6,12 +6,35 @@ from timeit import default_timer
 import logging
 import numpy as np
 from typing import List, Tuple
+import cv2
 
 
 from describe_images import describe_image, build_descriptor_model, calculate_feature_diffs
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
+
+
+def save_as_video(files: List, output_video: Path):
+
+    first_image_path = files[0]
+    frame = cv2.imread(str(first_image_path))
+    if frame is None:
+        logger.warning(f"Unable to read image")
+    height, width, _ = frame.shape
+    frame_size = (width, height)
+    fps = 3
+    fourcc = cv2.VideoWriter_fourcc(*'MP4V')
+    video_writer = cv2.VideoWriter(output_video, fourcc, fps, frame_size)
+
+    for image_path in files:
+        frame = cv2.imread(str(image_path))
+        if frame is None:
+            continue
+
+        video_writer.write(frame)
+
+    video_writer.release()
 
 
 def request_image(number: int) -> Image.Image | None:
@@ -51,7 +74,6 @@ def change(mse_slider: float, image_files, img_feature_list):
 
 def main():
     st.title("Packing Documentation")
-    t0 = default_timer()
 
     if "running" not in st.session_state:
         st.session_state.running = False
@@ -87,6 +109,12 @@ def main():
     if "folder_name" not in st.session_state:
         st.session_state.folder_name = ""
 
+    if 'button_stop' not in st.session_state:
+        st.session_state.button_stop = False
+
+    if 'button_show_video' not in st.session_state:
+        st.session_state.button_show_video = False
+
     # 0 means all the pictures
     save_folder = Path("data")
 
@@ -112,14 +140,19 @@ def main():
         )
 
     export_dir = save_folder / folder_name
-    image_files = list(list(export_dir.glob("*.png")) + list(export_dir.glob("*.jpg")))
+    #image_files = list(list(export_dir.glob("*.png")) + list(export_dir.glob("*.jpg")))
     with st.expander("Options"):
         col3, col4 = st.columns([2, 1])
+        button_save_image = False  # Initialize with a default value
+        button_show_video = False
+
         with col3:
             choose = st.radio("Save as", ("as distinct images", "as video"))
         with col4:
             if choose == "as distinct images":
                 button_save_image = st.button("Save image", disabled=not st.session_state.running)
+            if choose == "as video":
+                button_show_video = st.button("Show video", disabled=not st.session_state.running and st.session_state.button_stop)
 
         col5, col6 = st.columns([3, 1])
 
@@ -135,6 +168,7 @@ def main():
             if choose == "as distinct images":
                 st.metric(label="# Images", help="Unique images", value=st.session_state.image_counts)
 
+
         selected_resolution_str = st.select_slider(
             "Image resolution (to display in pixels of maximum side)",
             options=["640x480", "1280x720", "1920x1080"],
@@ -147,8 +181,6 @@ def main():
         st.session_state.stored_images = []
         st.session_state.img_feature_list = []
         st.session_state.image_counts = 0
-        st.session_state.folder_name = folder_name
-        export_dir = save_folder / folder_name
 
         if folder_name == "":
             message.warning(f"Please enter the folder name.")
@@ -191,7 +223,7 @@ def main():
             diff_min = min(diffs) if len(diffs) > 0 else 999
             logger.debug(f"{st.session_state.counter}: minimal difference = {diff_min:.4g}")
 
-            if ((diff_min > mse_slider) or button_save_image) and choose == "as distinct images":
+            if ((diff_min > mse_slider) or button_save_image) and (choose == "as distinct images" or choose == "as video"):
                 filename = f"{st.session_state.image_counts}.jpg"
                 img.save(export_dir / filename)
                 logger.debug(f"Image saved to {export_dir / filename} (MSE: {diff_min:.4g})")
@@ -205,11 +237,18 @@ def main():
             st.rerun()
 
     if button_stop:
+        st.session_state.button_stop = True
+        st.session_state.running = False
         export_dir = save_folder / st.session_state.folder_name
         image_files = list(export_dir.glob("*.jpg"))
         st.session_state.can_update = True
+        if len(image_files) == 1 and TOTAL_COUNTS > 1:
+            message.warning("You can lower the threshold to get more pictures.")
+        elif len(image_files) > 1 and TOTAL_COUNTS > 1:
+            message.success(f"There were {len(image_files)} images saved in folder '{st.session_state.folder_name}'.")
+        else:
+            message.warning("There is only one image in the original file.")
         show_list_images(image_files, resolution_slider)
-        message.success(f"There were {len(image_files)} images saved in folder '{st.session_state.folder_name}'.")
 
     button_update = st.button("Update", key="update_button", disabled=not st.session_state.can_update)
 
@@ -239,8 +278,22 @@ def main():
             show_list_images(temp, resolution_slider)
     elif not st.session_state.running and mse_slider < st.session_state.slider_tmp:
         message.warning(f"This is the same images gallery.")
-        temp = change(mse_slider, image_files, st.session_state.img_feature_list)
-        show_list_images(temp, resolution_slider)
+
+    if choose == "as video" and len(st.session_state.img_feature_list) >1:
+        export_dir = save_folder / st.session_state.folder_name
+        image_files = list(export_dir.glob("*.jpg"))
+        filename = f"{folder_name}_video.mp4"
+        save_as_video(image_files, export_dir/filename)
+
+    if button_show_video:
+        video_file = open(export_dir/filename, "rb")
+
+        video_bytes = video_file.read()
+
+        st.video(video_bytes, format="video/mp4")
+
+
+
 
 
 if __name__ == "__main__":
