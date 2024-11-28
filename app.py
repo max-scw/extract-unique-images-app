@@ -22,7 +22,7 @@ def save_as_video(files: List, output_video: Path):
     height, width, _ = frame.shape
     frame_size = (width, height)
     fps = 3
-    fourcc = cv2.VideoWriter_fourcc(*'WebM')
+    fourcc = cv2.VideoWriter_fourcc(*"WebM")
     video_writer = cv2.VideoWriter(output_video, fourcc, fps, frame_size)
 
     for image_path in files:
@@ -107,15 +107,14 @@ def main():
     if "folder_name" not in st.session_state:
         st.session_state.folder_name = ""
 
-    if 'button_stop' not in st.session_state:
+    if "button_stop" not in st.session_state:
         st.session_state.button_stop = False
 
-    if 'button_show_video' not in st.session_state:
+    if "button_show_video" not in st.session_state:
         st.session_state.button_show_video = False
 
-    if 'use_column_width' not in st.session_state:
+    if "use_column_width" not in st.session_state:
         st.session_state.use_column_width = False
-
 
     # 0 means all the pictures
     save_folder = Path("data")
@@ -142,7 +141,7 @@ def main():
         )
 
     export_dir = save_folder / folder_name
-    #image_files = list(list(export_dir.glob("*.png")) + list(export_dir.glob("*.jpg")))
+    # image_files = list(list(export_dir.glob("*.png")) + list(export_dir.glob("*.jpg")))
     with st.expander("Options"):
         col3, col4 = st.columns([2, 1])
         button_save_image = False  # Initialize with a default value
@@ -154,7 +153,9 @@ def main():
             if choose == "as distinct images":
                 button_save_image = st.button("Save image", disabled=not st.session_state.running)
             if choose == "as video":
-                button_show_video = st.button("Show video", disabled=not st.session_state.running and st.session_state.button_stop)
+                button_show_video = st.button(
+                    "Show video", disabled=not st.session_state.running and st.session_state.button_stop
+                )
 
         col5, col6 = st.columns([3, 1])
 
@@ -169,7 +170,6 @@ def main():
         with col6:
             if choose == "as distinct images":
                 st.metric(label="# Images", help="Unique images", value=st.session_state.image_counts)
-
 
         selected_resolution_str = st.select_slider(
             "Image resolution (to display in pixels of maximum side)",
@@ -225,7 +225,9 @@ def main():
             diff_min = min(diffs) if len(diffs) > 0 else 999
             logger.debug(f"{st.session_state.counter}: minimal difference = {diff_min:.4g}")
 
-            if ((diff_min > mse_slider) or button_save_image) and (choose == "as distinct images" or choose == "as video"):
+            if ((diff_min > mse_slider) or button_save_image) and (
+                choose == "as distinct images" or choose == "as video"
+            ):
                 filename = f"{st.session_state.image_counts}.jpg"
                 img.save(export_dir / filename)
                 logger.debug(f"Image saved to {export_dir / filename} (MSE: {diff_min:.4g})")
@@ -281,21 +283,18 @@ def main():
     elif not st.session_state.running and mse_slider < st.session_state.slider_tmp:
         message.warning(f"This is the same images gallery.")
 
-    if choose == "as video" and len(st.session_state.img_feature_list) >1:
+    if choose == "as video" and len(st.session_state.img_feature_list) > 1:
         export_dir = save_folder / st.session_state.folder_name
         image_files = list(export_dir.glob("*.jpg"))
         filename = f"{folder_name}_video.mp4"
-        save_as_video(image_files, export_dir/filename)
+        save_as_video(image_files, export_dir / filename)
 
     if button_show_video:
-        video_file = open(export_dir/filename, "rb")
+        video_file = open(export_dir / filename, "rb")
 
         video_bytes = video_file.read()
 
         st.video(video_bytes, format="video/mp4")
-
-
-
 
 
 if __name__ == "__main__":
