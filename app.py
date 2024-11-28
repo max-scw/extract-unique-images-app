@@ -141,7 +141,6 @@ def main():
         )
 
     export_dir = save_folder / folder_name
-    # image_files = list(list(export_dir.glob("*.png")) + list(export_dir.glob("*.jpg")))
     with st.expander("Options"):
         col3, col4 = st.columns([2, 1])
         button_save_image = False  # Initialize with a default value
