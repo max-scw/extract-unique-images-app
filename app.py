@@ -24,7 +24,7 @@ def save_as_video(files: List, output_video: Path):
     height, width, _ = frame.shape
     frame_size = (width, height)
     fps = 3
-    fourcc = cv2.VideoWriter_fourcc(*'MP4V')
+    fourcc = cv2.VideoWriter_fourcc(*'WebM')
     video_writer = cv2.VideoWriter(output_video, fourcc, fps, frame_size)
 
     for image_path in files:
@@ -115,6 +115,10 @@ def main():
     if 'button_show_video' not in st.session_state:
         st.session_state.button_show_video = False
 
+    if 'use_column_width' not in st.session_state:
+        st.session_state.use_column_width = False
+
+
     # 0 means all the pictures
     save_folder = Path("data")
 
@@ -204,7 +208,7 @@ def main():
         # to ensure that the export_dir has changed
         export_dir = save_folder / st.session_state.folder_name
         export_dir.mkdir(parents=True, exist_ok=True)
-
+        st.session_state.use_column_width = True
         container = st.container()
         logger.info(f"Starting loop. Saving images to {export_dir.as_posix()}")
 
@@ -215,7 +219,7 @@ def main():
             st.stop()
         else:
             with container:
-                st.image(img, caption="Current Image", use_column_width=True)
+                st.image(img, caption="Current Image")
 
             img_encoded = describe_image(img, *st.session_state.model)
             diffs = calculate_feature_diffs(img_encoded, st.session_state.stored_images)
