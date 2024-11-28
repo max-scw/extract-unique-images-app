@@ -1,8 +1,6 @@
 import streamlit as st
 from PIL import Image
 from pathlib import Path
-from time import sleep
-from timeit import default_timer
 import logging
 import numpy as np
 from typing import List, Tuple
