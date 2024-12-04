@@ -6,11 +6,35 @@ import numpy as np
 from typing import List, Tuple
 import cv2
 
+from datetime import datetime
+
+from timeit import default_timer as timer
+from time import sleep
 
 from describe_images import describe_image, build_descriptor_model, calculate_feature_diffs
 
+
+KEY_OPTION_SAVE_DISTINCT_IMAGES = "distinct images"
+KEY_OPTION_SAVE_VIDEO = "video"
+
+# config  # TODO: make configurable
+LOGGING_LEVEL = logging.DEBUG
+GALLERY_MAX_WIDTH: int = 150
+GALLERY_N_COLUMNS: int = 5
+GALLERY_IMAGE_WIDTH: int = 100
+
+IMAGE_DISPLAY_WIDTH: int = 320
+
+FRAMES_PER_SECOND: int = 10
+TITLE: str = "Extract unique images"
+
+IMAGE_RESOLUTION_OPTIONS = [240, 320, 480, 512, 640, 960, 1024, 1280]
+# IMAGE_RESOLUTION_MAX_WIDTH: int = 480
+IMAGE_RESOLUTION_IDX: int = 2
+
+
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+logger.setLevel(LOGGING_LEVEL)
 
 
 def save_as_video(files: List, output_video: Path):
@@ -35,13 +59,21 @@ def save_as_video(files: List, output_video: Path):
     video_writer.release()
 
 
-def request_image(number: int) -> Image.Image | None:
-    files = list(DATA_FOLDER.glob("*.jpg"))
+def request_image() -> Image.Image | None:
+    # FIXME: mockup
+    data_folder = (
+        Path(r"C:\Users\schwmax\OneDrive - Voith Group of Companies\SharedFiles\PackingDocumentation\Images")
+        / "PXL_20241105_141202849 mit Schwenkarm.TS_30fps"
+    )
+
+    files = list(data_folder.glob("*.jpg"))
     # load image from disk
-    if number < len(files):
-        return Image.open(files[number])
+    if st.session_state.counter < len(files):
+        img = Image.open(files[st.session_state.counter])  # FIXME: FRAMES_PER_SECOND
+        st.session_state.counter += 1
+        return img
     else:
-        st.success(f"All fotos were loaded. No more images left")
+        st.info(f"No more images left")
         return None
 
 
@@ -49,16 +81,29 @@ def set_running(value: bool):
     st.session_state.running = value
     if value is False:
         st.session_state.counter = 0
-        st.session_state.image_counts = 0
+
+def show_gallery():
+    logger.debug(f"show_gallery(): writing {len(st.session_state.images_thumbnails)} images to {GALLERY_N_COLUMNS} columns")
+    cols = st.columns(GALLERY_N_COLUMNS)
+    for i, img in enumerate(st.session_state.images_thumbnails):
+        cols[i % GALLERY_N_COLUMNS].image(img)
+        # with cols[i % GALLERY_N_COLUMNS]:
+        #     st.image(img, width=GALLERY_IMAGE_WIDTH)
 
 
-def show_list_images(image_files: List, resolution_slider: Tuple):
-    cols = st.columns(3)
-    for i, image_path in enumerate(image_files):
-        with cols[i % 3]:
-            img = Image.open(image_path)
-            img_resized = img.resize(resolution_slider)
-            st.image(img_resized, caption=None, width=200)
+def resize_image(img: Image.Image, max_width) -> Image.Image:
+    """Resize an image to a maximum width while maintaining its aspect ratio."""
+    # Calculate the new width and height while maintaining the aspect ratio
+    width, height = img.size
+    if width > max_width:
+        new_width = max_width
+        new_height = int(height * (max_width / width))
+    else:
+        new_width = width
+        new_height = height
+
+    # return the resized image
+    return img.resize((new_width, new_height))
 
 
 def change(mse_slider: float, image_files, img_feature_list):
@@ -70,237 +115,313 @@ def change(mse_slider: float, image_files, img_feature_list):
     return temp
 
 
-def main():
-    st.title("Packing Documentation")
-
-    if "running" not in st.session_state:
-        st.session_state.running = False
+def initialize_session_state():
 
     if "model" not in st.session_state:
         model, preprocess = build_descriptor_model()
         st.session_state.model = (model, preprocess)
+    
+    if "threshold" not in st.session_state:
+        st.session_state.threshold = 0.325
 
-    # Feature values of all opened images
-    if "stored_images" not in st.session_state:
-        st.session_state.stored_images = []
+
+    # initialize lists
+    key_list = ["images_thumbnails", "images_names", "images_encoded"]
+    for ky in key_list:
+        if ky not in st.session_state:
+            setattr(st.session_state, ky, [])
 
     if "counter" not in st.session_state:
         st.session_state.counter = 0
-    logger.debug("Session state variables initialized.")
 
-    # Feature values of the images stored in the target folder
-    if "img_feature_list" not in st.session_state:
-        st.session_state.img_feature_list = []
-
-    if "slider_default" not in st.session_state:
-        st.session_state.slider_default = 0.325
-
-    if "slider_tmp" not in st.session_state:
-        st.session_state.slider_tmp = 0
-
-    if "image_counts" not in st.session_state:
-        st.session_state.image_counts = 0
-
-    if "can_update" not in st.session_state:
-        st.session_state.can_update = False
+    if "folder_head" not in st.session_state:
+        st.session_state.folder_head = Path("./export")
+        st.session_state.folder_head.mkdir(parents=True, exist_ok=True)
 
     if "folder_name" not in st.session_state:
         st.session_state.folder_name = ""
 
-    if "button_stop" not in st.session_state:
-        st.session_state.button_stop = False
+    if "image_resolution_idx" not in st.session_state:
+        st.session_state.image_resolution_idx = IMAGE_RESOLUTION_IDX
+    if "image_resolution" not in st.session_state:
+        st.session_state.image_resolution = IMAGE_RESOLUTION_OPTIONS[IMAGE_RESOLUTION_IDX]
 
-    if "button_show_video" not in st.session_state:
-        st.session_state.button_show_video = False
+    if "video_writer" not in st.session_state:
+        st.session_state.video_writer = None
+    if "video_name" not in st.session_state:
+        st.session_state.video_name = None
 
-    if "use_column_width" not in st.session_state:
-        st.session_state.use_column_width = False
 
-    # 0 means all the pictures
-    save_folder = Path("data")
+    # set flags
+    keys_flag = [
+        "running",
+        "can_update",
+        "button_stop",
+        "button_show_video",
+        "use_column_width"  # FIXME: what does this do?
+    ]
+    for ky in keys_flag:
+        if ky not in st.session_state:
+            setattr(st.session_state, ky, False)
 
-    message = st.container()
-    cols = st.columns([1, 2, 1, 1], vertical_alignment="bottom")
-    with cols[0]:
-        button_start = st.button("Start", icon="😃", disabled=st.session_state.running)
-    with cols[1]:
-        st.markdown(
-            """
-                    <style>
-                    div[data-testid="stTextInput"] {
-                        margin-left: -30px; 
-                    }
-                    </style>
-                    """,
-            unsafe_allow_html=True,
-        )
-        folder_name = st.text_input("Enter order number")
-    with cols[2]:
-        button_stop = st.button(
-            "Close order", key="stop_button", disabled=not st.session_state.running, on_click=lambda: set_running(False)
-        )
 
-    export_dir = save_folder / folder_name
-    with st.expander("Options"):
-        col3, col4 = st.columns([2, 1])
-        button_save_image = False  # Initialize with a default value
-        button_show_video = False
+def get_export_dir(name: str, folder: Path, make_dir: bool = True) -> Path:
 
-        with col3:
-            choose = st.radio("Save as", ("as distinct images", "as video"))
-        with col4:
-            if choose == "as distinct images":
-                button_save_image = st.button("Save image", disabled=not st.session_state.running)
-            if choose == "as video":
-                button_show_video = st.button(
-                    "Show video", disabled=not st.session_state.running and st.session_state.button_stop
-                )
+    folder_ = Path(folder)
 
-        col5, col6 = st.columns([3, 1])
+    i = 1
+    name_ = name
+    while (folder_ / name_).exists():
+        name_ = f"{name}_{i}"
+        i += 1
 
-        with col5:
-            mse_slider = st.select_slider(
-                "Threshold to determine distinct images",
-                options=[round(x, 3) for x in np.arange(0.2, 0.5, 0.025)],
-                value=st.session_state.slider_default,  # default
-                key="slider_mse",
+    export_dir = folder_ / name_
+
+    if make_dir:
+        export_dir.mkdir(parents=True, exist_ok=True)
+        logger.debug(f"New folder created: {export_dir}")
+    return export_dir
+
+
+def main():
+    st.title(TITLE)
+
+    initialize_session_state()
+    st.markdown(
+        """
+                <style>
+                div[data-testid="stTextInput"] {
+                    margin-left: -30px; 
+                }
+                </style>
+                """,
+        unsafe_allow_html=True,
+    )
+
+    t0 = timer()
+
+
+    # Layout: Controls
+    with st.container():
+        cols_control = st.columns([1, 3, 1], vertical_alignment="bottom", gap="small")
+        with cols_control[0]:
+            button_start = st.button(
+                label="Start",
+                disabled=st.session_state.running,
+                type="primary",
+            )
+        with cols_control[1]:
+            folder_name = st.text_input(
+                label="Order number",  # TODO: make configurable
+                placeholder="Please enter an order number here"
+            )
+        with cols_control[2]:
+            button_stop = st.button(
+                label="Close order",
+                key="stop_button",
+                disabled=not st.session_state.running,
+                on_click=lambda: set_running(False),
+                type="primary",
+                use_container_width=True
             )
 
-        with col6:
-            if choose == "as distinct images":
-                st.metric(label="# Images", help="Unique images", value=st.session_state.image_counts)
+    # Layout: display messages
+    message_container = st.container()
 
-        selected_resolution_str = st.select_slider(
-            "Image resolution (to display in pixels of maximum side)",
-            options=["640x480", "1280x720", "1920x1080"],
-            value="1280x720",
-        )
-    resolution_slider = tuple(map(int, selected_resolution_str.split("x")))
+    # Layout: Options
+    with st.expander("Options"):
+        cols_options = st.columns([1, 1, 1])
+
+        with cols_options[0]:
+            choose = st.radio(
+                label="Save as",
+                options=(KEY_OPTION_SAVE_DISTINCT_IMAGES, KEY_OPTION_SAVE_VIDEO)
+            )  # TODO: make default configurable
+
+        with cols_options[1]:
+            resolution = st.selectbox(
+                label="Image resolution",
+                options=IMAGE_RESOLUTION_OPTIONS,
+                index=st.session_state.image_resolution_idx,
+                help="Maximum length of the saves images or video frames in pixels."
+            )
+            logging.debug(f"Selected image resolution: {resolution}")
+            # update session state
+            st.session_state.image_resolution_idx = IMAGE_RESOLUTION_OPTIONS.index(resolution)
+            st.session_state.image_resolution = resolution
+
+
+        with cols_options[2]:
+            th_mse = st.select_slider(
+                label="Threshold to determine distinct images",
+                options=[round(x, 3) for x in np.arange(0.2, 0.5, 0.025)],
+                value=st.session_state.threshold,  # default
+                key="slider_mse",
+                help="Threshold of the mean-squared-error (mse) between image features. "
+                     "An image is saved if the minimal mse value to all stored images is larger than this threshold.",
+                disabled=choose != KEY_OPTION_SAVE_DISTINCT_IMAGES,
+            )
+            logging.debug(f"Selected threshold: {th_mse} (MSE)")
+            # update session state
+            st.session_state.threshold = th_mse
+
+    # Layout: secondary controls
+    with st.container():
+        cols_control_secondary = st.columns([1, 1, 1, 1, 1], vertical_alignment="bottom", gap="small")
+        with cols_control_secondary[0]:
+            button_show = st.button(
+                label="Update" if choose == KEY_OPTION_SAVE_DISTINCT_IMAGES else "Show video",
+                key="button_show",
+                disabled=not st.session_state.can_update  # FIXME: session state?
+            )
+
+        with cols_control_secondary[4]:
+            button_save_image = st.button(
+                label="Save image",
+                key="button_save_image",
+                disabled=choose != KEY_OPTION_SAVE_DISTINCT_IMAGES,
+                use_container_width=True
+            )
+
+    # Layout: main display
+    main_display = st.container()
+    with main_display:
+        cols_main = st.columns([1, 5, 1])
+        display = cols_main[1]
+        with cols_main[2]:
+            if choose == KEY_OPTION_SAVE_DISTINCT_IMAGES:
+                st.metric(
+                    label="\# Images",
+                    help="Unique images",
+                    value=len(st.session_state.images_names)
+                )
 
     if button_start:
-        st.session_state.running = True
-        st.session_state.stored_images = []
-        st.session_state.img_feature_list = []
-        st.session_state.image_counts = 0
-
-        if folder_name == "":
-            message.warning(f"Please enter the folder name.")
-            st.stop()
+        if not folder_name:
+            message_container.warning(f"Please enter the folder name.")
         else:
-            while export_dir.exists():
-                if "_" in folder_name and folder_name.split("_")[-1].isdigit():
-                    base_name = "_".join(folder_name.split("_")[:-1])
-                    count = int(folder_name.split("_")[-1]) + 1
-                    folder_name = f"{base_name}_{count}"
-                else:
-                    folder_name = f"{folder_name}_1"
-                export_dir = save_folder / folder_name
+            # reset message container
+            message_container = st.empty()
+            # reset display container
+            main_display = st.empty()
+            # create export directory
+            st.session_state.export_dir = get_export_dir(name=folder_name, folder=st.session_state.folder_head)
+            # reset loop variables
+            st.session_state.running = True
+            # reset image lists
+            key_list = ["images_thumbnails", "images_names", "images_encoded", "image_date"]
+            for ky in key_list:
+                setattr(st.session_state, ky, [])
+            # reset video writer
+            st.session_state.video_writer = None
 
-            export_dir.mkdir(parents=True, exist_ok=True)
-            st.session_state.folder_name = folder_name
-            logger.info(f"New folder created: {export_dir}")
-            message.success(f"Folder '{folder_name}' created successfully.")
 
     if st.session_state.running:
-        # to ensure that the export_dir has changed
-        export_dir = save_folder / st.session_state.folder_name
-        export_dir.mkdir(parents=True, exist_ok=True)
-        st.session_state.use_column_width = True
-        container = st.container()
-        logger.info(f"Starting loop. Saving images to {export_dir.as_posix()}")
 
-        img = request_image(st.session_state.counter)
+        img = request_image()
+        img = resize_image(img, st.session_state.image_resolution)
         if img is None:
-            message.warning("No more images available, stopping.")
-            st.session_state.running = False
-            st.stop()
+            message_container.warning("No image retrieved. You may want to stop the mode.")
         else:
-            with container:
-                st.image(img, caption="Current Image")
+            # display image
+            with display:
+                st.image(img, width=IMAGE_DISPLAY_WIDTH)
 
-            img_encoded = describe_image(img, *st.session_state.model)
-            diffs = calculate_feature_diffs(img_encoded, st.session_state.stored_images)
+            if choose == KEY_OPTION_SAVE_DISTINCT_IMAGES:
+                # encode image
+                img_encoded = describe_image(img, *st.session_state.model)
+                diffs = calculate_feature_diffs(img_encoded, st.session_state.images_encoded)
 
-            diff_min = min(diffs) if len(diffs) > 0 else 999
-            logger.debug(f"{st.session_state.counter}: minimal difference = {diff_min:.4g}")
+                diff_min = min(diffs) if len(diffs) > 0 else 999
+                logger.debug(f"{st.session_state.counter}: minimal difference = {diff_min:.4g}")
 
-            if ((diff_min > mse_slider) or button_save_image) and (
-                choose == "as distinct images" or choose == "as video"
-            ):
-                filename = f"{st.session_state.image_counts}.jpg"
-                img.save(export_dir / filename)
-                logger.debug(f"Image saved to {export_dir / filename} (MSE: {diff_min:.4g})")
+                if (diff_min > st.session_state.threshold) or button_save_image:
+                    # save image to folder
+                    filename = f"{len(st.session_state.images_names)}.jpg"
+                    filepath = st.session_state.export_dir / filename
+                    img.save(filepath)
 
-                st.session_state.stored_images.append(img_encoded)
-                st.session_state.img_feature_list.append(diff_min)
-                st.session_state.image_counts += 1
-                st.session_state.slider_tmp = mse_slider
+                    # store image
+                    st.session_state.images_encoded.append(img_encoded)
+                    st.session_state.images_names.append(filename)
+                    st.session_state.images_thumbnails.append(img)#resize_image(img, max_width=GALLERY_MAX_WIDTH)
 
-            st.session_state.counter += int(30 / FRAMES_PER_SECOND)
+                    logger.debug(f"Image saved to {filepath} (minimal MSE: {diff_min:.4g})")
+            elif choose == KEY_OPTION_SAVE_VIDEO:
+                if st.session_state.video_writer is None:
+                    # initialize video writer
+                    fourcc = cv2.VideoWriter_fourcc(*"VP80")  # mp4v not supported by streamlit but much more efficient
+                    st.session_state.video_name = st.session_state.export_dir / f"{st.session_state.export_dir.stem}.webm"
+                    st.session_state.video_writer = cv2.VideoWriter(
+                        st.session_state.video_name.as_posix(),
+                        fourcc,
+                        FRAMES_PER_SECOND,
+                        img.size
+                    )
+                # write frame to video
+                st.session_state.video_writer.write(np.asarray(img))
+
+
+            else:
+                raise Exception(f"Unexpected option to save images: {choose}")
+
+            # wait
+            dt = timer() - t0
+            dt_wait = (1 / FRAMES_PER_SECOND) - dt
+            logger.debug(f"Sleep {dt:.4} seconds")
+            if dt_wait > 0:
+                sleep(dt_wait)
             st.rerun()
 
     if button_stop:
         st.session_state.button_stop = True
         st.session_state.running = False
-        export_dir = save_folder / st.session_state.folder_name
-        image_files = list(export_dir.glob("*.jpg"))
-        st.session_state.can_update = True
-        if len(image_files) == 1 and TOTAL_COUNTS > 1:
-            message.warning("You can lower the threshold to get more pictures.")
-        elif len(image_files) > 1 and TOTAL_COUNTS > 1:
-            message.success(f"There were {len(image_files)} images saved in folder '{st.session_state.folder_name}'.")
-        else:
-            message.warning("There is only one image in the original file.")
-        show_list_images(image_files, resolution_slider)
 
-    button_update = st.button("Update", key="update_button", disabled=not st.session_state.can_update)
+        if st.session_state.video_writer is not None:
+            st.session_state.video_writer.release()
+            logger.debug("Video writer released.")
 
-    if button_update:
-        export_dir = save_folder / st.session_state.folder_name
-        image_files = list(export_dir.glob("*.jpg"))
-        message.success(f"Images have been in {st.session_state.folder_name} updated.")
-        temp = change(mse_slider, image_files, st.session_state.img_feature_list)
-        for el in image_files:
-            if el not in temp:
-                Path(el).unlink()
-        if len(temp) < 1:
-            message.error("All images were deleted.")
-        image_files = temp
-        show_list_images(image_files, resolution_slider)
+        if (choose == KEY_OPTION_SAVE_DISTINCT_IMAGES) and (len(st.session_state.images_names) > 0):
+            message_container.success(f"{len(st.session_state.images_names)} image(s) saved.")
+        elif choose == KEY_OPTION_SAVE_VIDEO:
+            st.video(st.session_state.video_name.as_posix())
 
-    if not st.session_state.running and mse_slider > st.session_state.slider_tmp and not button_update:
-        export_dir = save_folder / st.session_state.folder_name
-        image_files = list(export_dir.glob("*.jpg"))
-        temp = change(mse_slider, image_files, st.session_state.img_feature_list)
-        if len(temp) > 1:
-            show_list_images(temp, resolution_slider)
-            message.success("slider changed")
-            message.success(f"You get {len(temp)} images right now.")
-        if len(temp) == 1:
-            message.warning("Threshold set too high, only the first image remains.")
-            show_list_images(temp, resolution_slider)
-    elif not st.session_state.running and mse_slider < st.session_state.slider_tmp:
-        message.warning(f"This is the same images gallery.")
 
-    if choose == "as video" and len(st.session_state.img_feature_list) > 1:
-        export_dir = save_folder / st.session_state.folder_name
-        image_files = list(export_dir.glob("*.jpg"))
-        filename = f"{folder_name}_video.mp4"
-        save_as_video(image_files, export_dir / filename)
+    if (not st.session_state.running) and (len(st.session_state.images_names) > 0):
 
-    if button_show_video:
-        video_file = open(export_dir / filename, "rb")
+        if choose == KEY_OPTION_SAVE_DISTINCT_IMAGES:
+            with main_display:
+                show_gallery()
 
-        video_bytes = video_file.read()
 
-        st.video(video_bytes, format="video/mp4")
+    # if button_show:
+    #     image_files = list(st.session_state.export_dir.glob("*.jpg"))
+    #     message_container.success(f"Images have been in {st.session_state.folder_name} updated.")
+    #     temp = change(th_mse, image_files, st.session_state.img_feature_list)
+    #     for el in image_files:
+    #         if el not in temp:
+    #             Path(el).unlink()
+    #     if len(temp) < 1:
+    #         message_container.error("All images were deleted.")
+    #     image_files = temp
+    #     show_gallery()
+
+    # if (not st.session_state.running) and (th_mse > st.session_state.threshold) and (not button_show):
+    #
+    #     image_files = list(st.session_state.export_dir.glob("*.jpg"))
+    #     temp = change(th_mse, image_files, st.session_state.img_feature_list)
+    #     if len(temp) > 1:
+    #         show_gallery()
+    #         message_container.success("slider changed")
+    #         message_container.success(f"You get {len(temp)} images right now.")
+    #     if len(temp) == 1:
+    #         message_container.warning("Threshold set too high, only the first image remains.")
+    #         show_gallery()
+    # elif not st.session_state.running and th_mse < st.session_state.threshold:
+    #     message_container.warning(f"No images were changed.")
+
 
 
 if __name__ == "__main__":
-    DATA_FOLDER = (
-        Path(r"C:\Users\TianXue\OneDrive - Voith Group of Companies\PackingDocumentation\Images")
-        / "PXL_20241105_141202849 mit Schwenkarm.TS_30fps"
-    )
-    TOTAL_COUNTS = len(list(DATA_FOLDER.glob("*.jpg")))
-    FRAMES_PER_SECOND = 10
+
     main()
