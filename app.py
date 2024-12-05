@@ -6,12 +6,16 @@ import numpy as np
 from typing import List, Tuple
 import cv2
 
-from datetime import datetime
 
 from timeit import default_timer as timer
 from time import sleep
 
 from describe_images import describe_image, build_descriptor_model, calculate_feature_diffs
+
+from typing import Literal
+
+
+VideoCodec = Literal["mp4v", "h264", "X264", "avc1", "HEVC"]
 
 
 KEY_OPTION_SAVE_DISTINCT_IMAGES = "distinct images"
@@ -19,18 +23,19 @@ KEY_OPTION_SAVE_VIDEO = "video"
 
 # config  # TODO: make configurable
 LOGGING_LEVEL = logging.DEBUG
-GALLERY_MAX_WIDTH: int = 150
-GALLERY_N_COLUMNS: int = 5
+GALLERY_N_COLUMNS: int = 6
 GALLERY_IMAGE_WIDTH: int = 100
 
 IMAGE_DISPLAY_WIDTH: int = 320
+VIDEO_CODEC: VideoCodec = "h264"  # make sure that the openh264 codec is installed (version 1.8)
 
 FRAMES_PER_SECOND: int = 10
 TITLE: str = "Extract unique images"
 
 IMAGE_RESOLUTION_OPTIONS = [240, 320, 480, 512, 640, 960, 1024, 1280]
-# IMAGE_RESOLUTION_MAX_WIDTH: int = 480
 IMAGE_RESOLUTION_IDX: int = 2
+
+LAYOUT_LANDSCAPE: bool = False
 
 
 logger = logging.getLogger(__name__)
@@ -184,7 +189,11 @@ def get_export_dir(name: str, folder: Path, make_dir: bool = True) -> Path:
 
 
 def main():
-    st.title(TITLE)
+    st.set_page_config(
+        page_title=TITLE,
+        page_icon=":camera:",
+        layout="wide" if LAYOUT_LANDSCAPE else "centered"
+    )  # must be called as the first Streamlit command in your script.
 
     initialize_session_state()
     st.markdown(
@@ -200,101 +209,102 @@ def main():
 
     t0 = timer()
 
+    st.title(TITLE)
 
-    # Layout: Controls
-    with st.container():
-        cols_control = st.columns([1, 3, 1], vertical_alignment="bottom", gap="small")
-        with cols_control[0]:
-            button_start = st.button(
-                label="Start",
-                disabled=st.session_state.running,
-                type="primary",
-            )
-        with cols_control[1]:
-            folder_name = st.text_input(
-                label="Order number",  # TODO: make configurable
-                placeholder="Please enter an order number here"
-            )
-        with cols_control[2]:
-            button_stop = st.button(
-                label="Close order",
-                key="stop_button",
-                disabled=not st.session_state.running,
-                on_click=lambda: set_running(False),
-                type="primary",
-                use_container_width=True
-            )
+    # build layout: menu column layout
+    menu, space = st.columns([1, 2]) if LAYOUT_LANDSCAPE else st.container(), st.container()
 
-    # Layout: display messages
-    message_container = st.container()
-
-    # Layout: Options
-    with st.expander("Options"):
-        cols_options = st.columns([1, 1, 1])
-
-        with cols_options[0]:
-            choose = st.radio(
-                label="Save as",
-                options=(KEY_OPTION_SAVE_DISTINCT_IMAGES, KEY_OPTION_SAVE_VIDEO)
-            )  # TODO: make default configurable
-
-        with cols_options[1]:
-            resolution = st.selectbox(
-                label="Image resolution",
-                options=IMAGE_RESOLUTION_OPTIONS,
-                index=st.session_state.image_resolution_idx,
-                help="Maximum length of the saves images or video frames in pixels."
-            )
-            logging.debug(f"Selected image resolution: {resolution}")
-            # update session state
-            st.session_state.image_resolution_idx = IMAGE_RESOLUTION_OPTIONS.index(resolution)
-            st.session_state.image_resolution = resolution
-
-
-        with cols_options[2]:
-            th_mse = st.select_slider(
-                label="Threshold to determine distinct images",
-                options=[round(x, 3) for x in np.arange(0.2, 0.5, 0.025)],
-                value=st.session_state.threshold,  # default
-                key="slider_mse",
-                help="Threshold of the mean-squared-error (mse) between image features. "
-                     "An image is saved if the minimal mse value to all stored images is larger than this threshold.",
-                disabled=choose != KEY_OPTION_SAVE_DISTINCT_IMAGES,
-            )
-            logging.debug(f"Selected threshold: {th_mse} (MSE)")
-            # update session state
-            st.session_state.threshold = th_mse
-
-    # Layout: secondary controls
-    with st.container():
-        cols_control_secondary = st.columns([1, 1, 1, 1, 1], vertical_alignment="bottom", gap="small")
-        with cols_control_secondary[0]:
-            button_show = st.button(
-                label="Update" if choose == KEY_OPTION_SAVE_DISTINCT_IMAGES else "Show video",
-                key="button_show",
-                disabled=not st.session_state.can_update  # FIXME: session state?
-            )
-
-        with cols_control_secondary[4]:
-            button_save_image = st.button(
-                label="Save image",
-                key="button_save_image",
-                disabled=choose != KEY_OPTION_SAVE_DISTINCT_IMAGES,
-                use_container_width=True
-            )
-
-    # Layout: main display
-    main_display = st.container()
-    with main_display:
-        cols_main = st.columns([1, 5, 1])
-        display = cols_main[1]
-        with cols_main[2]:
-            if choose == KEY_OPTION_SAVE_DISTINCT_IMAGES:
-                st.metric(
-                    label="\# Images",
-                    help="Unique images",
-                    value=len(st.session_state.images_names)
+    # put layout into effect
+    with menu:
+        # Layout: Controls
+        with st.container():
+            cols_control = st.columns([1, 3, 1], vertical_alignment="bottom", gap="small")
+            with cols_control[0]:
+                button_start = st.button(
+                    label="Start",
+                    disabled=st.session_state.running,
+                    type="primary",
                 )
+            with cols_control[1]:
+                folder_name = st.text_input(
+                    label="Order number",  # TODO: make configurable
+                    placeholder="Please enter an order number here",
+                    disabled=st.session_state.running
+                )
+            with cols_control[2]:
+                button_stop = st.button(
+                    label="Close order",
+                    key="stop_button",
+                    disabled=not st.session_state.running,
+                    on_click=lambda: set_running(False),
+                    type="primary",
+                    use_container_width=True
+                )
+
+        # Layout: Options
+        with st.expander("Options"):
+            cols_options = st.columns([1, 1, 1])
+
+            with cols_options[0]:
+                choose = st.radio(
+                    label="Save as",
+                    options=(KEY_OPTION_SAVE_DISTINCT_IMAGES, KEY_OPTION_SAVE_VIDEO)
+                )  # TODO: make default configurable
+
+            with cols_options[1]:
+                resolution = st.selectbox(
+                    label="Image resolution",
+                    options=IMAGE_RESOLUTION_OPTIONS,
+                    index=st.session_state.image_resolution_idx,
+                    help="Maximum length of the saves images or video frames in pixels."
+                )
+                logging.debug(f"Selected image resolution: {resolution}")
+                # update session state
+                st.session_state.image_resolution_idx = IMAGE_RESOLUTION_OPTIONS.index(resolution)
+                st.session_state.image_resolution = resolution
+
+
+            with cols_options[2]:
+                th_mse = st.select_slider(
+                    label="Threshold to determine distinct images",
+                    options=[round(x, 3) for x in np.arange(0.2, 0.5, 0.025)],
+                    value=st.session_state.threshold,  # default
+                    key="slider_mse",
+                    help="Threshold of the mean-squared-error (mse) between image features. "
+                         "An image is saved if the minimal mse value to all stored images is larger than this threshold.",
+                    disabled=choose != KEY_OPTION_SAVE_DISTINCT_IMAGES,
+                )
+                logging.debug(f"Selected threshold: {th_mse} (MSE)")
+                # update session state
+                st.session_state.threshold = th_mse
+
+        # Layout: secondary controls
+        with st.container():
+            cols_control_secondary = st.columns([1, 1, 1, 1, 1], vertical_alignment="bottom", gap="small")
+            with cols_control_secondary[4]:
+                if choose == KEY_OPTION_SAVE_DISTINCT_IMAGES:
+                    st.metric(
+                        label="\# Images",
+                        help="Unique images",
+                        value=len(st.session_state.images_names)
+                    )
+
+            with cols_control_secondary[0]:
+                if choose == KEY_OPTION_SAVE_DISTINCT_IMAGES:
+                    button_save_image = st.button(
+                        label="Save image",
+                        key="button_save_image",
+                        disabled=not st.session_state.running,
+                        # use_container_width=True
+                    )
+                else:
+                    button_save_image = False
+
+    with space:
+        # Layout: display messages
+        message_container = st.container()
+        # Layout: display
+        display = st.container()
 
     if button_start:
         if not folder_name:
@@ -303,7 +313,7 @@ def main():
             # reset message container
             message_container = st.empty()
             # reset display container
-            main_display = st.empty()
+            # display = st.empty()
             # create export directory
             st.session_state.export_dir = get_export_dir(name=folder_name, folder=st.session_state.folder_head)
             # reset loop variables
@@ -315,7 +325,6 @@ def main():
             # reset video writer
             st.session_state.video_writer = None
 
-
     if st.session_state.running:
 
         img = request_image()
@@ -324,8 +333,7 @@ def main():
             message_container.warning("No image retrieved. You may want to stop the mode.")
         else:
             # display image
-            with display:
-                st.image(img, width=IMAGE_DISPLAY_WIDTH)
+            display.image(img, width=IMAGE_DISPLAY_WIDTH)
 
             if choose == KEY_OPTION_SAVE_DISTINCT_IMAGES:
                 # encode image
@@ -333,9 +341,9 @@ def main():
                 diffs = calculate_feature_diffs(img_encoded, st.session_state.images_encoded)
 
                 diff_min = min(diffs) if len(diffs) > 0 else 999
-                logger.debug(f"{st.session_state.counter}: minimal difference = {diff_min:.4g}")
 
                 if (diff_min > st.session_state.threshold) or button_save_image:
+                    logger.debug(f"{st.session_state.counter}: minimal difference = {diff_min:.4g} > {st.session_state.threshold}")
                     # save image to folder
                     filename = f"{len(st.session_state.images_names)}.jpg"
                     filepath = st.session_state.export_dir / filename
@@ -344,14 +352,14 @@ def main():
                     # store image
                     st.session_state.images_encoded.append(img_encoded)
                     st.session_state.images_names.append(filename)
-                    st.session_state.images_thumbnails.append(img)#resize_image(img, max_width=GALLERY_MAX_WIDTH)
+                    st.session_state.images_thumbnails.append(img)
 
                     logger.debug(f"Image saved to {filepath} (minimal MSE: {diff_min:.4g})")
             elif choose == KEY_OPTION_SAVE_VIDEO:
                 if st.session_state.video_writer is None:
                     # initialize video writer
-                    fourcc = cv2.VideoWriter_fourcc(*"VP80")  # mp4v not supported by streamlit but much more efficient
-                    st.session_state.video_name = st.session_state.export_dir / f"{st.session_state.export_dir.stem}.webm"
+                    fourcc = cv2.VideoWriter_fourcc(*VIDEO_CODEC)
+                    st.session_state.video_name = st.session_state.export_dir / f"{st.session_state.export_dir.stem}.mp4"
                     st.session_state.video_writer = cv2.VideoWriter(
                         st.session_state.video_name.as_posix(),
                         fourcc,
@@ -382,17 +390,17 @@ def main():
             logger.debug("Video writer released.")
 
         if (choose == KEY_OPTION_SAVE_DISTINCT_IMAGES) and (len(st.session_state.images_names) > 0):
-            message_container.success(f"{len(st.session_state.images_names)} image(s) saved.")
+            msg = f"{len(st.session_state.images_names)} image(s) saved."
+            # message_container.success()
+            st.toast(msg)
         elif choose == KEY_OPTION_SAVE_VIDEO:
-            st.video(st.session_state.video_name.as_posix())
-
+            display.video(st.session_state.video_name.as_posix())
 
     if (not st.session_state.running) and (len(st.session_state.images_names) > 0):
 
         if choose == KEY_OPTION_SAVE_DISTINCT_IMAGES:
-            with main_display:
+            with display:
                 show_gallery()
-
 
     # if button_show:
     #     image_files = list(st.session_state.export_dir.glob("*.jpg"))
