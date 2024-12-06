@@ -1,11 +1,10 @@
 import streamlit as st
-from PIL import Image
 from pathlib import Path
 import logging
-import numpy as np
-from typing import List, Tuple
-import cv2
 
+from PIL import Image
+import cv2
+import numpy as np
 
 from timeit import default_timer as timer
 from time import sleep
@@ -68,12 +67,32 @@ def set_running(value: bool):
         st.session_state.counter = 0
 
 
-def show_gallery():
+def get_min_difference(img_encoded, encoded_images: List[np.ndarray]) -> float:
+    diffs = calculate_feature_diffs(img_encoded, encoded_images)
+
+    return min(diffs) if len(diffs) > 0 else 999.
+
+
+def get_images_exceeding_threshold() -> List[int]:
+    list_stored_images = []
+    for idx, img_enc in enumerate(st.session_state.images_encoded):
+        diff_min = get_min_difference(img_enc, [st.session_state.images_encoded[el] for el in list_stored_images])
+        if diff_min > st.session_state.threshold:
+            list_stored_images.append(idx)
+    return list_stored_images
+
+
+def show_gallery() -> List[int]:
     logger.debug(f"show_gallery(): writing {len(st.session_state.images_thumbnails)} images to {GALLERY_N_COLUMNS} columns")
+
+    list_stored_images = get_images_exceeding_threshold()
+    images = [st.session_state.images_thumbnails[el] for el in list_stored_images]
+
     with st.container(height=GALLERY_OVERALL_HEIGHT):
         cols = st.columns(GALLERY_N_COLUMNS)
-        for i, img in enumerate(st.session_state.images_thumbnails):
+        for i, img in enumerate(images):
             cols[i % GALLERY_N_COLUMNS].image(img)
+    return list_stored_images
 
 
 def resize_image(img: Image.Image, max_length: int | float) -> Image.Image:
@@ -95,15 +114,6 @@ def resize_image(img: Image.Image, max_length: int | float) -> Image.Image:
 
     # return the resized image
     return img.resize(size_new)
-
-
-def change(mse_slider: float, image_files, img_feature_list):
-    temp = []
-    # Ensure we only iterate over indices that are valid for both lists
-    for i in range(min(len(image_files), len(img_feature_list))):
-        if img_feature_list[i] > mse_slider:
-            temp.append(image_files[i])
-    return temp
 
 
 def initialize_session_state():
@@ -132,8 +142,8 @@ def initialize_session_state():
     if "folder_name" not in st.session_state:
         st.session_state.folder_name = ""
 
-    if "image_resolution_idx" not in st.session_state:
-        st.session_state.image_resolution_idx = IMAGE_RESOLUTION_IDX
+    # if "image_resolution_idx" not in st.session_state:
+    #     st.session_state.image_resolution_idx = IMAGE_RESOLUTION_IDX
     if "image_resolution" not in st.session_state:
         st.session_state.image_resolution = IMAGE_RESOLUTION_OPTIONS[IMAGE_RESOLUTION_IDX]
 
@@ -146,10 +156,7 @@ def initialize_session_state():
     # set flags
     keys_flag = [
         "running",
-        "can_update",
         "button_stop",
-        "button_show_video",
-        "use_column_width"  # FIXME: what does this do?
     ]
     for ky in keys_flag:
         if ky not in st.session_state:
@@ -234,40 +241,56 @@ def main():
             with cols_options[0]:
                 choose = st.radio(
                     label="Save as",
+                    key="save_as",
                     options=(KEY_OPTION_SAVE_DISTINCT_IMAGES, KEY_OPTION_SAVE_VIDEO)
                 )  # TODO: make default configurable
 
             with cols_options[1]:
-                resolution = st.selectbox(
+                st.selectbox(
                     label="Image resolution",
                     options=IMAGE_RESOLUTION_OPTIONS,
-                    index=st.session_state.image_resolution_idx,
+                    key="image_resolution",
                     help="Maximum length of the saves images or video frames in pixels.",
                     disabled=st.session_state.running
                 )
-                logging.debug(f"Selected image resolution: {resolution}")
-                # update session state
-                st.session_state.image_resolution_idx = IMAGE_RESOLUTION_OPTIONS.index(resolution)
-                st.session_state.image_resolution = resolution
+                logging.debug(f"Selected image resolution: {st.session_state.image_resolution}")
+
 
 
             with cols_options[2]:
-                th_mse = st.select_slider(
+                st.select_slider(
                     label="Threshold to determine distinct images",
-                    options=[round(x, 3) for x in np.arange(0.2, 0.5, 0.025)],
-                    value=st.session_state.threshold,  # default
-                    key="slider_mse",
+                    options=[round(x, 3) for x in np.arange(0.15, 0.5001, 0.025)],
+                    key="threshold",
                     help="Threshold of the mean-squared-error (mse) between image features. "
                          "An image is saved if the minimal mse value to all stored images is larger than this threshold.",
                     disabled=choose != KEY_OPTION_SAVE_DISTINCT_IMAGES,
                 )
-                logging.debug(f"Selected threshold: {th_mse} (MSE)")
-                # update session state
-                st.session_state.threshold = th_mse
+                logging.debug(f"Selected threshold: {st.session_state.threshold} (MSE)")
 
         # Layout: secondary controls
         with st.container():
             cols_control_secondary = st.columns([1, 1, 1, 1, 1], vertical_alignment="bottom", gap="small")
+            with cols_control_secondary[0]:
+                if choose == KEY_OPTION_SAVE_DISTINCT_IMAGES:
+                    button_save_image = st.button(
+                        label="Save image",
+                        key="button_save_image",
+                        disabled=not st.session_state.running,
+                    )
+                else:
+                    button_save_image = False
+
+            with cols_control_secondary[1]:
+                if choose == KEY_OPTION_SAVE_DISTINCT_IMAGES:
+                    button_update_images = st.button(
+                        label="Update images",
+                        key="button_update_images",
+                        disabled=st.session_state.running or not st.session_state.images_names,
+                    )
+                else:
+                    button_update_images = False
+
             with cols_control_secondary[4]:
                 if choose == KEY_OPTION_SAVE_DISTINCT_IMAGES:
                     st.metric(
@@ -276,16 +299,6 @@ def main():
                         value=len(st.session_state.images_names)
                     )
 
-            with cols_control_secondary[0]:
-                if choose == KEY_OPTION_SAVE_DISTINCT_IMAGES:
-                    button_save_image = st.button(
-                        label="Save image",
-                        key="button_save_image",
-                        disabled=not st.session_state.running,
-                        # use_container_width=True
-                    )
-                else:
-                    button_save_image = False
 
     with space:
         # Layout: display messages
@@ -297,11 +310,10 @@ def main():
     if button_start:
         if not folder_name:
             message_container.warning(f"Please enter the folder name.")
+            st.session_state.running = False
         else:
             # reset message container
             message_container = st.empty()
-            # reset display container
-            # display = st.empty()
             # create export directory
             st.session_state.export_dir = get_export_dir(name=folder_name, folder=st.session_state.folder_head)
             # reset loop variables
@@ -326,9 +338,7 @@ def main():
             if choose == KEY_OPTION_SAVE_DISTINCT_IMAGES:
                 # encode image
                 img_encoded = describe_image(img, *st.session_state.model)
-                diffs = calculate_feature_diffs(img_encoded, st.session_state.images_encoded)
-
-                diff_min = min(diffs) if len(diffs) > 0 else 999
+                diff_min = get_min_difference(img_encoded, st.session_state.images_encoded)
 
                 if (diff_min > st.session_state.threshold) or button_save_image:
                     logger.debug(f"{st.session_state.counter}: minimal difference = {diff_min:.4g} > {st.session_state.threshold}")
@@ -393,7 +403,22 @@ def main():
 
         if choose == KEY_OPTION_SAVE_DISTINCT_IMAGES:
             with display:
-                show_gallery()
+                idx_images = show_gallery()
+
+    if button_update_images:
+        image_names_old = st.session_state.images_names
+        # update session_state
+        key_list =["images_thumbnails", "images_names", "images_encoded"]
+        for ky in key_list:
+            value = getattr(st.session_state, ky)
+            new_value = [value[el] for el in idx_images]
+            setattr(st.session_state, ky, new_value)
+
+        for nm in image_names_old:
+            if nm not in st.session_state.images_names:
+                fl = st.session_state.export_dir / nm
+                logger.debug(f"Deleting image {fl.as_posix()}")
+                fl.unlink()
 
 
 if __name__ == "__main__":
