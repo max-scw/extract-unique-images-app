@@ -12,7 +12,7 @@ from time import sleep
 
 from describe_images import describe_image, build_descriptor_model, calculate_feature_diffs
 
-from typing import Literal
+from typing import Literal, List
 
 
 VideoCodec = Literal["mp4v", "h264", "X264", "avc1", "HEVC"]
@@ -22,9 +22,10 @@ KEY_OPTION_SAVE_DISTINCT_IMAGES = "distinct images"
 KEY_OPTION_SAVE_VIDEO = "video"
 
 # config  # TODO: make configurable
-LOGGING_LEVEL = logging.DEBUG
+LOGGING_LEVEL: int = logging.DEBUG
 GALLERY_N_COLUMNS: int = 6
 GALLERY_IMAGE_WIDTH: int = 100
+GALLERY_OVERALL_HEIGHT: int | None = None
 
 IMAGE_DISPLAY_WIDTH: int = 320
 VIDEO_CODEC: VideoCodec = "h264"  # make sure that the openh264 codec is installed (version 1.8)
@@ -32,7 +33,7 @@ VIDEO_CODEC: VideoCodec = "h264"  # make sure that the openh264 codec is install
 FRAMES_PER_SECOND: int = 10
 TITLE: str = "Extract unique images"
 
-IMAGE_RESOLUTION_OPTIONS = [240, 320, 480, 512, 640, 960, 1024, 1280]
+IMAGE_RESOLUTION_OPTIONS: List[int] = [240, 320, 480, 512, 640, 960, 1024, 1280]
 IMAGE_RESOLUTION_IDX: int = 2
 
 LAYOUT_LANDSCAPE: bool = False
@@ -41,27 +42,6 @@ LAYOUT_LANDSCAPE: bool = False
 logger = logging.getLogger(__name__)
 logger.setLevel(LOGGING_LEVEL)
 
-
-def save_as_video(files: List, output_video: Path):
-
-    first_image_path = files[0]
-    frame = cv2.imread(str(first_image_path))
-    if frame is None:
-        logger.warning(f"Unable to read image")
-    height, width, _ = frame.shape
-    frame_size = (width, height)
-    fps = 3
-    fourcc = cv2.VideoWriter_fourcc(*"WebM")
-    video_writer = cv2.VideoWriter(output_video, fourcc, fps, frame_size)
-
-    for image_path in files:
-        frame = cv2.imread(str(image_path))
-        if frame is None:
-            continue
-
-        video_writer.write(frame)
-
-    video_writer.release()
 
 
 def request_image() -> Image.Image | None:
@@ -87,28 +67,34 @@ def set_running(value: bool):
     if value is False:
         st.session_state.counter = 0
 
+
 def show_gallery():
     logger.debug(f"show_gallery(): writing {len(st.session_state.images_thumbnails)} images to {GALLERY_N_COLUMNS} columns")
-    cols = st.columns(GALLERY_N_COLUMNS)
-    for i, img in enumerate(st.session_state.images_thumbnails):
-        cols[i % GALLERY_N_COLUMNS].image(img)
-        # with cols[i % GALLERY_N_COLUMNS]:
-        #     st.image(img, width=GALLERY_IMAGE_WIDTH)
+    with st.container(height=GALLERY_OVERALL_HEIGHT):
+        cols = st.columns(GALLERY_N_COLUMNS)
+        for i, img in enumerate(st.session_state.images_thumbnails):
+            cols[i % GALLERY_N_COLUMNS].image(img)
 
 
-def resize_image(img: Image.Image, max_width) -> Image.Image:
+def resize_image(img: Image.Image, max_length: int | float) -> Image.Image:
     """Resize an image to a maximum width while maintaining its aspect ratio."""
     # Calculate the new width and height while maintaining the aspect ratio
-    width, height = img.size
-    if width > max_width:
-        new_width = max_width
-        new_height = int(height * (max_width / width))
+    width, height = img.size  # PIL: (width, height)
+
+    len_max = max(img.size)
+    len_min = min(img.size)
+
+    if len_max > max_length:
+        len_max_new = max_length
+        len_min_new = int(len_min * (max_length / len_max))
     else:
-        new_width = width
-        new_height = height
+        len_max_new = len_max
+        len_min_new = len_min
+
+    size_new = (len_max_new, len_min_new) if width > height else (len_min_new, len_max_new)
 
     # return the resized image
-    return img.resize((new_width, new_height))
+    return img.resize(size_new)
 
 
 def change(mse_slider: float, image_files, img_feature_list):
@@ -256,7 +242,8 @@ def main():
                     label="Image resolution",
                     options=IMAGE_RESOLUTION_OPTIONS,
                     index=st.session_state.image_resolution_idx,
-                    help="Maximum length of the saves images or video frames in pixels."
+                    help="Maximum length of the saves images or video frames in pixels.",
+                    disabled=st.session_state.running
                 )
                 logging.debug(f"Selected image resolution: {resolution}")
                 # update session state
@@ -304,7 +291,8 @@ def main():
         # Layout: display messages
         message_container = st.container()
         # Layout: display
-        display = st.container()
+        _, display, _ = st.columns([0.1, 0.8, 0.1])
+        # display = st.container()
 
     if button_start:
         if not folder_name:
@@ -364,11 +352,14 @@ def main():
                         st.session_state.video_name.as_posix(),
                         fourcc,
                         FRAMES_PER_SECOND,
-                        img.size
+                        img.size  # PIL: (width, height)
+                    )
+                    logger.debug(
+                        f"Set up a VideoWriter for {st.session_state.video_name.as_posix()} "
+                        f"(codec={VIDEO_CODEC}, fps={FRAMES_PER_SECOND}, size={img.size})"
                     )
                 # write frame to video
-                st.session_state.video_writer.write(np.asarray(img))
-
+                st.session_state.video_writer.write(np.asarray(img, dtype=np.uint8))
 
             else:
                 raise Exception(f"Unexpected option to save images: {choose}")
@@ -394,40 +385,15 @@ def main():
             # message_container.success()
             st.toast(msg)
         elif choose == KEY_OPTION_SAVE_VIDEO:
-            display.video(st.session_state.video_name.as_posix())
+            with display:
+                _, col, _ = st.columns([0.1, 0.8, 0.1])
+                col.video(st.session_state.video_name.as_posix())
 
     if (not st.session_state.running) and (len(st.session_state.images_names) > 0):
 
         if choose == KEY_OPTION_SAVE_DISTINCT_IMAGES:
             with display:
                 show_gallery()
-
-    # if button_show:
-    #     image_files = list(st.session_state.export_dir.glob("*.jpg"))
-    #     message_container.success(f"Images have been in {st.session_state.folder_name} updated.")
-    #     temp = change(th_mse, image_files, st.session_state.img_feature_list)
-    #     for el in image_files:
-    #         if el not in temp:
-    #             Path(el).unlink()
-    #     if len(temp) < 1:
-    #         message_container.error("All images were deleted.")
-    #     image_files = temp
-    #     show_gallery()
-
-    # if (not st.session_state.running) and (th_mse > st.session_state.threshold) and (not button_show):
-    #
-    #     image_files = list(st.session_state.export_dir.glob("*.jpg"))
-    #     temp = change(th_mse, image_files, st.session_state.img_feature_list)
-    #     if len(temp) > 1:
-    #         show_gallery()
-    #         message_container.success("slider changed")
-    #         message_container.success(f"You get {len(temp)} images right now.")
-    #     if len(temp) == 1:
-    #         message_container.warning("Threshold set too high, only the first image remains.")
-    #         show_gallery()
-    # elif not st.session_state.running and th_mse < st.session_state.threshold:
-    #     message_container.warning(f"No images were changed.")
-
 
 
 if __name__ == "__main__":
