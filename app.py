@@ -2,75 +2,76 @@ import streamlit as st
 from pathlib import Path
 import logging
 
-from PIL import Image
-import cv2
 import numpy as np
 
 from timeit import default_timer as timer
 from time import sleep
 
-from describe_images import describe_image, build_descriptor_model, calculate_feature_diffs
 
-from typing import Literal, List
+from DataModels_BaslerCameraAdapter import BaslerCameraSettings, ImageParams
+from utils import get_env_variable, setup_logging
+from ImageProcessingThread import ImageProcessingThread, get_min_difference
+
+from typing import Literal, List, Tuple, Dict, Any
 
 
 VideoCodec = Literal["mp4v", "h264", "X264", "avc1", "HEVC"]
 
-
 KEY_OPTION_SAVE_DISTINCT_IMAGES = "distinct images"
 KEY_OPTION_SAVE_VIDEO = "video"
-
-# config  # TODO: make configurable
-LOGGING_LEVEL: int = logging.DEBUG
-GALLERY_N_COLUMNS: int = 6
-GALLERY_IMAGE_WIDTH: int = 100
-GALLERY_OVERALL_HEIGHT: int | None = None
-
-IMAGE_DISPLAY_WIDTH: int = 320
-VIDEO_CODEC: VideoCodec = "h264"  # make sure that the openh264 codec is installed (version 1.8)
-
-FRAMES_PER_SECOND: int = 10
-TITLE: str = "Extract unique images"
-
-IMAGE_RESOLUTION_OPTIONS: List[int] = [240, 320, 480, 512, 640, 960, 1024, 1280]
-IMAGE_RESOLUTION_IDX: int = 2
-
-LAYOUT_LANDSCAPE: bool = False
+SAVE_OPTIONS = (KEY_OPTION_SAVE_DISTINCT_IMAGES, KEY_OPTION_SAVE_VIDEO)
 
 
-logger = logging.getLogger(__name__)
-logger.setLevel(LOGGING_LEVEL)
+@st.cache_data
+def get_config() -> Dict[str, Any]:
+    # set up logging
+    logger = setup_logging(__name__, logging.DEBUG)
 
+    # set up config
+    default_config = {
+        "TITLE": "Extract unique images",
+        "INPUT_TEXT_TITLE": "Order number",
+        "INPUT_TEXT_PLACEHOLDER": "Please enter an order number here",
+        "IMAGE_SAVE_QUALITY": 95,
+        "LOOP_UPDATE_TIME": 0.1,
+        # "LAYOUT_LANDSCAPE": False,
+        "IMAGE_DISPLAY_WIDTH": 320,
+        # gallery
+        "GALLERY_N_COLUMNS": 6,
+        "GALLERY_OVERALL_HEIGHT": None,
+        # options
+        "OPTIONS_IMAGE_RESOLUTION": [240, 320, 480, 512, 640, 960, 1024, 1280],
+        "OPTIONS_IMAGE_RESOLUTION_INIT_IDX": 2,
+        "OPTIONS_SAVE_AS_CHOICE_INIT_IDX": 0,
+        "OPTIONS_TH_MIN": 0.15,
+        "OPTIONS_TH_MAX": 0.5,
+        "OPTIONS_TH_INC": 0.025,
+        "OPTIONS_TH_INIT": 0.325,
+        "IMAGES_PER_SECOND": 5,
+        "IMAGES_PER_SECOND_MIN": 1,
+        "IMAGES_PER_SECOND_MAX": 23,
+        # video
+        "VIDEO_CODEC": "h264",
+        # camera
+        "CAMERA_ADDRESS": None,
+        "CAMERA_TOKEN": None,
+        "CAMERA_TIMEOUT": 5,
+        # DEBUGGING
+        # "TEST_DATA_FOLDER": None,
+        "TEST_DATA_FOLDER": Path(r"C:\Users\schwmax\OneDrive - Voith Group of Companies\SharedFiles\PackingDocumentation\Images") / "PXL_20241105_141202849 mit Schwenkarm.TS_30fps"
+    }
+    config = {ky: get_env_variable(ky, vl, check_for_prefix=True) for ky, vl in default_config.items()}
 
+    config["CAMERA_SETTINGS"] = BaslerCameraSettings()
+    config["CAMERA_IMAGE_PARAMETER"] = ImageParams()
 
-def request_image() -> Image.Image | None:
-    # FIXME: mockup
-    data_folder = (
-        Path(r"C:\Users\schwmax\OneDrive - Voith Group of Companies\SharedFiles\PackingDocumentation\Images")
-        / "PXL_20241105_141202849 mit Schwenkarm.TS_30fps"
-    )
-
-    files = list(data_folder.glob("*.jpg"))
-    # load image from disk
-    if st.session_state.counter < len(files):
-        img = Image.open(files[st.session_state.counter])  # FIXME: FRAMES_PER_SECOND
-        st.session_state.counter += 1
-        return img
-    else:
-        st.info(f"No more images left")
-        return None
+    logger.debug(f"config: {config}")
+    config["logger"] = logger
+    return config
 
 
 def set_running(value: bool):
     st.session_state.running = value
-    if value is False:
-        st.session_state.counter = 0
-
-
-def get_min_difference(img_encoded, encoded_images: List[np.ndarray]) -> float:
-    diffs = calculate_feature_diffs(img_encoded, encoded_images)
-
-    return min(diffs) if len(diffs) > 0 else 999.
 
 
 def get_images_exceeding_threshold() -> List[int]:
@@ -82,49 +83,28 @@ def get_images_exceeding_threshold() -> List[int]:
     return list_stored_images
 
 
-def show_gallery() -> List[int]:
-    logger.debug(f"show_gallery(): writing {len(st.session_state.images_thumbnails)} images to {GALLERY_N_COLUMNS} columns")
+def show_gallery(config: Dict[str, Any]) -> List[int]:
+    logger = config["logger"]
+    logger.debug(f"show_gallery(): len(st.session_state.images_thumbnails) {len(st.session_state.images_thumbnails)}")
 
     list_stored_images = get_images_exceeding_threshold()
     images = [st.session_state.images_thumbnails[el] for el in list_stored_images]
 
-    with st.container(height=GALLERY_OVERALL_HEIGHT):
-        cols = st.columns(GALLERY_N_COLUMNS)
+    logger.debug(f"show_gallery(): writing {len(images)} images to {config['GALLERY_N_COLUMNS']} columns")
+    with st.container(height=config["GALLERY_OVERALL_HEIGHT"]):
+        cols = st.columns(config["GALLERY_N_COLUMNS"])
         for i, img in enumerate(images):
-            cols[i % GALLERY_N_COLUMNS].image(img)
+            cols[i % config["GALLERY_N_COLUMNS"]].image(img)
     return list_stored_images
 
 
-def resize_image(img: Image.Image, max_length: int | float) -> Image.Image:
-    """Resize an image to a maximum width while maintaining its aspect ratio."""
-    # Calculate the new width and height while maintaining the aspect ratio
-    width, height = img.size  # PIL: (width, height)
-
-    len_max = max(img.size)
-    len_min = min(img.size)
-
-    if len_max > max_length:
-        len_max_new = max_length
-        len_min_new = int(len_min * (max_length / len_max))
-    else:
-        len_max_new = len_max
-        len_min_new = len_min
-
-    size_new = (len_max_new, len_min_new) if width > height else (len_min_new, len_max_new)
-
-    # return the resized image
-    return img.resize(size_new)
-
-
-def initialize_session_state():
-
-    if "model" not in st.session_state:
-        model, preprocess = build_descriptor_model()
-        st.session_state.model = (model, preprocess)
+def initialize_session_state(config: Dict[str, Any]):
     
     if "threshold" not in st.session_state:
-        st.session_state.threshold = 0.325
+        st.session_state.threshold = config["OPTIONS_TH_INIT"]
 
+    if "save_as" not in st.session_state:
+        st.session_state.save_as = SAVE_OPTIONS[config["OPTIONS_SAVE_AS_CHOICE_INIT_IDX"]]
 
     # initialize lists
     key_list = ["images_thumbnails", "images_names", "images_encoded"]
@@ -142,15 +122,14 @@ def initialize_session_state():
     if "folder_name" not in st.session_state:
         st.session_state.folder_name = ""
 
-    # if "image_resolution_idx" not in st.session_state:
-    #     st.session_state.image_resolution_idx = IMAGE_RESOLUTION_IDX
     if "image_resolution" not in st.session_state:
-        st.session_state.image_resolution = IMAGE_RESOLUTION_OPTIONS[IMAGE_RESOLUTION_IDX]
+        st.session_state.image_resolution = config["OPTIONS_IMAGE_RESOLUTION"][config["OPTIONS_IMAGE_RESOLUTION_INIT_IDX"]]
 
-    if "video_writer" not in st.session_state:
-        st.session_state.video_writer = None
-    if "video_name" not in st.session_state:
-        st.session_state.video_name = None
+    if "images_per_second" not in st.session_state:
+        st.session_state.images_per_second = config["IMAGES_PER_SECOND"]
+
+    if "thread" not in st.session_state:
+        st.session_state.thread = None
 
 
     # set flags
@@ -164,7 +143,6 @@ def initialize_session_state():
 
 
 def get_export_dir(name: str, folder: Path, make_dir: bool = True) -> Path:
-
     folder_ = Path(folder)
 
     i = 1
@@ -177,18 +155,23 @@ def get_export_dir(name: str, folder: Path, make_dir: bool = True) -> Path:
 
     if make_dir:
         export_dir.mkdir(parents=True, exist_ok=True)
+        logger = logging.getLogger(__name__)
         logger.debug(f"New folder created: {export_dir}")
     return export_dir
 
 
 def main():
+    layout_landscape = get_env_variable("LAYOUT_LANDSCAPE", False)
     st.set_page_config(
-        page_title=TITLE,
+        # page_title=get_env_variable("TITLE", "Extract unique images"),
         page_icon=":camera:",
-        layout="wide" if LAYOUT_LANDSCAPE else "centered"
+        layout="wide" if layout_landscape else "centered"
     )  # must be called as the first Streamlit command in your script.
 
-    initialize_session_state()
+    config = get_config()
+    logger = config["logger"]
+
+    initialize_session_state(config)
     st.markdown(
         """
                 <style>
@@ -202,10 +185,10 @@ def main():
 
     t0 = timer()
 
-    st.title(TITLE)
+    st.title(config["TITLE"])
 
     # build layout: menu column layout
-    menu, space = st.columns([1, 2]) if LAYOUT_LANDSCAPE else st.container(), st.container()
+    menu, space = st.columns([1, 2]) if layout_landscape else st.container(), st.container()
 
     # put layout into effect
     with menu:
@@ -220,8 +203,8 @@ def main():
                 )
             with cols_control[1]:
                 folder_name = st.text_input(
-                    label="Order number",  # TODO: make configurable
-                    placeholder="Please enter an order number here",
+                    label=config["INPUT_TEXT_TITLE"],
+                    placeholder=config["INPUT_TEXT_PLACEHOLDER"],
                     disabled=st.session_state.running
                 )
             with cols_control[2]:
@@ -242,31 +225,39 @@ def main():
                 choose = st.radio(
                     label="Save as",
                     key="save_as",
-                    options=(KEY_OPTION_SAVE_DISTINCT_IMAGES, KEY_OPTION_SAVE_VIDEO)
-                )  # TODO: make default configurable
+                    options=SAVE_OPTIONS
+                )
 
             with cols_options[1]:
                 st.selectbox(
                     label="Image resolution",
-                    options=IMAGE_RESOLUTION_OPTIONS,
+                    options=config["OPTIONS_IMAGE_RESOLUTION"],
                     key="image_resolution",
                     help="Maximum length of the saves images or video frames in pixels.",
                     disabled=st.session_state.running
                 )
-                logging.debug(f"Selected image resolution: {st.session_state.image_resolution}")
-
-
+                st.number_input(
+                    label="Images per second",
+                    min_value=config["IMAGES_PER_SECOND_MIN"],
+                    max_value=config["IMAGES_PER_SECOND_MAX"],
+                    step=1,
+                    format="%d",
+                    key="images_per_second",
+                )
 
             with cols_options[2]:
                 st.select_slider(
                     label="Threshold to determine distinct images",
-                    options=[round(x, 3) for x in np.arange(0.15, 0.5001, 0.025)],
+                    options=np.arange(
+                        config["OPTIONS_TH_MIN"],
+                        config["OPTIONS_TH_MAX"] + 1e-10,
+                        config["OPTIONS_TH_INC"]
+                    ).round(3),
                     key="threshold",
                     help="Threshold of the mean-squared-error (mse) between image features. "
                          "An image is saved if the minimal mse value to all stored images is larger than this threshold.",
                     disabled=choose != KEY_OPTION_SAVE_DISTINCT_IMAGES,
                 )
-                logging.debug(f"Selected threshold: {st.session_state.threshold} (MSE)")
 
         # Layout: secondary controls
         with st.container():
@@ -296,7 +287,7 @@ def main():
                     st.metric(
                         label="\# Images",
                         help="Unique images",
-                        value=len(st.session_state.images_names)
+                        value=st.session_state.counter
                     )
 
 
@@ -322,69 +313,55 @@ def main():
             key_list = ["images_thumbnails", "images_names", "images_encoded", "image_date"]
             for ky in key_list:
                 setattr(st.session_state, ky, [])
-            # reset video writer
-            st.session_state.video_writer = None
+            # reset counter
+            st.session_state.counter = 0
+            # reset thread
+            if st.session_state.thread is not None:
+                st.session_state.thread.join()
+                st.session_state.thread.stop()
 
-    if st.session_state.running:
-
-        img = request_image()
-        img = resize_image(img, st.session_state.image_resolution)
-        if img is None:
-            message_container.warning("No image retrieved. You may want to stop the mode.")
-        else:
-            # display image
-            display.image(img, width=IMAGE_DISPLAY_WIDTH)
-
-            if choose == KEY_OPTION_SAVE_DISTINCT_IMAGES:
-                # encode image
-                img_encoded = describe_image(img, *st.session_state.model)
-                diff_min = get_min_difference(img_encoded, st.session_state.images_encoded)
-
-                if (diff_min > st.session_state.threshold) or button_save_image:
-                    logger.debug(f"{st.session_state.counter}: minimal difference = {diff_min:.4g} > {st.session_state.threshold}")
-                    # save image to folder
-                    filename = f"{len(st.session_state.images_names)}.jpg"
-                    filepath = st.session_state.export_dir / filename
-                    img.save(filepath)
-
-                    # store image
-                    st.session_state.images_encoded.append(img_encoded)
-                    st.session_state.images_names.append(filename)
-                    st.session_state.images_thumbnails.append(img)
-
-                    logger.debug(f"Image saved to {filepath} (minimal MSE: {diff_min:.4g})")
-            elif choose == KEY_OPTION_SAVE_VIDEO:
-                if st.session_state.video_writer is None:
-                    # initialize video writer
-                    fourcc = cv2.VideoWriter_fourcc(*VIDEO_CODEC)
-                    st.session_state.video_name = st.session_state.export_dir / f"{st.session_state.export_dir.stem}.mp4"
-                    st.session_state.video_writer = cv2.VideoWriter(
-                        st.session_state.video_name.as_posix(),
-                        fourcc,
-                        FRAMES_PER_SECOND,
-                        img.size  # PIL: (width, height)
-                    )
-                    logger.debug(
-                        f"Set up a VideoWriter for {st.session_state.video_name.as_posix()} "
-                        f"(codec={VIDEO_CODEC}, fps={FRAMES_PER_SECOND}, size={img.size})"
-                    )
-                # write frame to video
-                st.session_state.video_writer.write(np.asarray(img, dtype=np.uint8))
-
-            else:
-                raise Exception(f"Unexpected option to save images: {choose}")
-
-            # wait
-            dt = timer() - t0
-            dt_wait = (1 / FRAMES_PER_SECOND) - dt
-            logger.debug(f"Sleep {dt:.4} seconds")
-            if dt_wait > 0:
-                sleep(dt_wait)
+            st.session_state.thread = ImageProcessingThread(
+                address=config["CAMERA_ADDRESS"],
+                camera_params=config["CAMERA_SETTINGS"],
+                image_params=config["CAMERA_IMAGE_PARAMETER"],
+                timeout=config["CAMERA_TIMEOUT"],
+                token=config["CAMERA_TOKEN"],
+                choose=choose,
+                images_per_second=st.session_state.images_per_second,
+                image_resolution=st.session_state.image_resolution,
+                export_dir=st.session_state.export_dir,
+                image_save_quality=config["IMAGE_SAVE_QUALITY"],
+                video_codec=config["VIDEO_CODEC"],
+                threshold=st.session_state.threshold,
+                test_data_folder=config["TEST_DATA_FOLDER"],
+            )
+            st.session_state.thread.start()
             st.rerun()
 
+    if st.session_state.thread is not None:
+        st.session_state.thread.threshold = st.session_state.threshold
+        st.session_state.thread.running = st.session_state.running
+        st.session_state.thread.images_per_second = st.session_state.images_per_second
+
+        if button_save_image:
+            st.session_state.thread.save_image = True
+        if (st.session_state.thread.image is not None) and st.session_state.running:
+            display.image(st.session_state.thread.image)
+        st.session_state.counter = len(st.session_state.thread.images_names)
+
+
     if button_stop:
-        st.session_state.button_stop = True
         st.session_state.running = False
+
+        thread = st.session_state.thread
+        thread.running = False
+        thread.join()
+        thread.stop()
+
+        st.session_state.video_name = thread.video_name
+        st.session_state.images_names = thread.images_names
+        st.session_state.images_encoded = thread.images_encoded
+        st.session_state.images_thumbnails = thread.images_thumbnails
 
         if st.session_state.video_writer is not None:
             st.session_state.video_writer.release()
@@ -394,16 +371,24 @@ def main():
             msg = f"{len(st.session_state.images_names)} image(s) saved."
             # message_container.success()
             st.toast(msg)
+            display = st.empty()
         elif choose == KEY_OPTION_SAVE_VIDEO:
             with display:
                 _, col, _ = st.columns([0.1, 0.8, 0.1])
                 col.video(st.session_state.video_name.as_posix())
 
-    if (not st.session_state.running) and (len(st.session_state.images_names) > 0):
+    elif st.session_state.running:
+        dt = timer() - t0
+        dt_wait = max([1 / st.session_state.images_per_second, config["LOOP_UPDATE_TIME"]]) - dt
+        if dt_wait > 0:
+            sleep(dt_wait)
+        st.rerun()
 
+    if (not st.session_state.running) and (len(st.session_state.images_names) > 0):
         if choose == KEY_OPTION_SAVE_DISTINCT_IMAGES:
             with display:
-                idx_images = show_gallery()
+                idx_images = show_gallery(config)
+                print(f"SHOW GALLERY {idx_images}")
 
     if button_update_images:
         image_names_old = st.session_state.images_names
