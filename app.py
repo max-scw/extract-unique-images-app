@@ -57,8 +57,8 @@ def get_config() -> Dict[str, Any]:
         "CAMERA_TOKEN": None,
         "CAMERA_TIMEOUT": 5,
         # DEBUGGING
-        # "TEST_DATA_FOLDER": None,
-        "TEST_DATA_FOLDER": Path(r"C:\Users\schwmax\OneDrive - Voith Group of Companies\SharedFiles\PackingDocumentation\Images") / "PXL_20241105_141202849 mit Schwenkarm.TS_30fps"
+        "TEST_DATA_FOLDER": None,
+        # "TEST_DATA_FOLDER": Path(r"C:\Users\schwmax\OneDrive - Voith Group of Companies\SharedFiles\PackingDocumentation\Images") / "PXL_20241105_141202849 mit Schwenkarm.TS_30fps"
     }
     config = {ky: get_env_variable(ky, vl, check_for_prefix=True) for ky, vl in default_config.items()}
 
